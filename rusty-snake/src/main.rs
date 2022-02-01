@@ -1,9 +1,25 @@
 use bevy::prelude::*;
+use rand::prelude::random;
+use bevy::core::FixedTimestep;
+
+#[derive(PartialEq, Copy, Clone)]
+enum Direction
+{
+    Left,
+    Up,
+    Right,
+    Down,
+}
+
 
 #[derive(Component)]
-struct SnakeHead;
+struct SnakeHead
+{
+    direction: Direction,
+}
 
 const SNAKE_HEAD_COLOR: Color = Color::rgb(0.7, 0.7, 0.7);
+const FOOD_COLOR: Color = Color::rgb(1.0, 0.0, 1.0);
 
 const ARENA_WIDTH: u32 = 10;
 const ARENA_HEIGHT: u32 = 10;
@@ -22,6 +38,9 @@ struct Size
     height: f32,
 }
 
+#[derive(Component)]
+struct Food;
+
 impl Size
 {
     pub fn square(x: f32) -> Self
@@ -34,25 +53,67 @@ impl Size
     }
 }
 
-fn snake_movement(
-    keyboard_input: Res<Input<KeyCode>>,
-    mut head_positions: Query<&mut Position, With<SnakeHead>>,
-) {
-    for mut pos in head_positions.iter_mut() {
-        if keyboard_input.pressed(KeyCode::Left) {
-            pos.x -= 1;
-        }
-        if keyboard_input.pressed(KeyCode::Right) {
-            pos.x += 1;
-        }
-        if keyboard_input.pressed(KeyCode::Down) {
-            pos.y -= 1;
-        }
-        if keyboard_input.pressed(KeyCode::Up) {
-            pos.y += 1;
+impl Direction
+{
+    fn opposite(self) -> Self
+    {
+        match self
+        {
+            Self::Left => Self::Right,
+            Self::Right => Self::Left,
+            Self::Up => Self::Down,
+            Self::Down => Self::Up,
         }
     }
 }
+
+#[derive(SystemLabel, Debug, Hash, PartialEq, Eq, Clone)]
+pub enum SnakeMovement
+{
+    Input,
+    Movement,
+    Eating,
+    Growth,
+}
+
+fn snake_movement_input(keyboard_input: Res<Input<KeyCode>>, mut heads: Query<&mut SnakeHead>) {
+    if let Some(mut head) = heads.iter_mut().next() {
+        let dir: Direction = if keyboard_input.pressed(KeyCode::Left) {
+            Direction::Left
+        } else if keyboard_input.pressed(KeyCode::Down) {
+            Direction::Down
+        } else if keyboard_input.pressed(KeyCode::Up) {
+            Direction::Up
+        } else if keyboard_input.pressed(KeyCode::Right) {
+            Direction::Right
+        } else {
+            head.direction
+        };
+        if dir != head.direction.opposite() {
+            head.direction = dir;
+        }
+    }
+}
+
+fn snake_movement(mut heads: Query<(&mut Position, &SnakeHead)>) {
+    if let Some((mut head_pos, head)) = heads.iter_mut().next() {
+        match &head.direction {
+            Direction::Left => {
+                head_pos.x -= 1;
+            }
+            Direction::Right => {
+                head_pos.x += 1;
+            }
+            Direction::Up => {
+                head_pos.y += 1;
+            }
+            Direction::Down => {
+                head_pos.y -= 1;
+            }
+        };
+    }
+}
+
 
 fn size_scaling(
     windows: Res<Windows>,
@@ -112,8 +173,29 @@ fn spawn_snake(mut commands: Commands)
             },
             ..Default::default()
         })
-        .insert(SnakeHead)
+        .insert(SnakeHead{ direction: Direction::Up })
         .insert(Position {x: 3, y: 3})
+        .insert(Size::square(0.8));
+}
+
+fn food_spawner(mut commands: Commands)
+{
+    commands
+        .spawn_bundle(SpriteBundle
+        {
+            sprite: Sprite
+            {
+                color: FOOD_COLOR,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .insert(Food)
+        .insert(Position
+        {
+            x: (random::<f32>() * ARENA_WIDTH as f32) as i32,
+            y: (random::<f32>() * ARENA_HEIGHT as f32) as i32,
+        })
         .insert(Size::square(0.8));
 }
 
@@ -125,15 +207,36 @@ fn setup_camera(mut commands: Commands)
 fn main()
 {
     App::new()
+    .insert_resource(WindowDescriptor
+    {
+        title: "Snake!".to_string(),
+        width: 500.0,
+        height: 500.0,
+        ..Default::default()
+    })
+    .insert_resource(ClearColor(Color::rgb(0.04, 0.04, 0.04)))
     .add_startup_system(setup_camera)
     .add_startup_system(spawn_snake)
-    .add_system(snake_movement)
+    .add_system(snake_movement_input
+        .label(SnakeMovement::Input)
+        .before(SnakeMovement::Movement),
+    )
+    .add_system_set(
+        SystemSet::new()
+            .with_run_criteria(FixedTimestep::step(0.150))
+            .with_system(snake_movement.label(SnakeMovement::Movement)),
+    )
 	.add_system_set_to_stage(
 		CoreStage::PostUpdate,
 		SystemSet::new()
 			.with_system(position_translation)
 			.with_system(size_scaling),
 	)
+    .add_system_set(
+        SystemSet::new()
+            .with_run_criteria(FixedTimestep::step(1.0))
+            .with_system(food_spawner),
+    )
     .add_plugins(DefaultPlugins)
     .run();
 }
